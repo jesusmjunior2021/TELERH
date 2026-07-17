@@ -1,0 +1,27 @@
+# Segredos — NUNCA subir para o GitHub (repositório público)
+.streamlit/secrets.toml
+secrets.toml
+*.env
+.env
+.env.*
+*service_account*.json
+*client_secret*.json
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# SO / editor
+.DS_Store
+.vscode/
+.idea/
