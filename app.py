@@ -265,21 +265,12 @@ def load_produtividade_lancamentos() -> pd.DataFrame:
         return pd.DataFrame(columns=["id"] + sio.HEADERS[sio.SHEET_PRODUTIVIDADE_LANCAMENTOS])
 
 
-@st.cache_data(ttl=120, show_spinner=False)
-def load_ponto() -> pd.DataFrame:
-    try:
-        return sio.load_sheet_df(sio.SHEET_PONTO_TELETRABALHO, header_row=1)
-    except Exception:
-        return pd.DataFrame(columns=["id"] + sio.HEADERS[sio.SHEET_PONTO_TELETRABALHO])
-
-
 # ───────────────────────────── Sidebar / navegação ───────────────────────
 st.sidebar.title("🏛️ Teletrabalho TJ/MA")
 st.sidebar.caption("COGEX-MA/TJMA")
 
 PAGINAS = [
     "📊 Dashboard",
-    "🕒 Check-in / Check-out",
     "📈 Produtividade",
     "⚖️ Magistrados",
     "🧑‍💼 Servidores Ativos",
@@ -311,30 +302,13 @@ if pagina == "📊 Dashboard":
     df_sa = sio.load_sheet_df(sio.SHEET_SERVIDORES_ATIVOS, sio.HEADER_ROW[sio.SHEET_SERVIDORES_ATIVOS])
     df_cnj = sio.load_sheet_df(sio.SHEET_CNJ, sio.HEADER_ROW[sio.SHEET_CNJ])
     df_desl = sio.load_sheet_df(sio.SHEET_SERVIDORES_DESLIGADOS, sio.HEADER_ROW[sio.SHEET_SERVIDORES_DESLIGADOS])
-    df_ponto = load_ponto()
-
-    hoje_str = dt.date.today().strftime("%d/%m/%Y")
-    checkins_hoje = 0
-    checkouts_hoje = 0
-    if not df_ponto.empty and "DATA" in df_ponto.columns and "TIPO" in df_ponto.columns:
-        hoje_df = df_ponto[df_ponto["DATA"] == hoje_str]
-        checkins_hoje = int((hoje_df["TIPO"] == "CHECK-IN").sum())
-        checkouts_hoje = int((hoje_df["TIPO"] == "CHECK-OUT").sum())
 
     kpi_row(
         [
             ("Servidores ativos", len(df_sa)),
             ("Magistrados em condição especial", len(df_mag)),
-            ("Check-ins hoje", checkins_hoje),
-            ("Check-outs hoje", checkouts_hoje),
-        ]
-    )
-    kpi_row(
-        [
             ("Pedidos CNJ registrados", len(df_cnj)),
             ("Servidores desligados do regime", len(df_desl)),
-            ("Registros de ponto (total)", len(df_ponto)),
-            ("Última atualização", dt.datetime.now().strftime("%H:%M")),
         ]
     )
 
@@ -359,92 +333,6 @@ if pagina == "📊 Dashboard":
         with c4:
             fig = px.pie(df_sa, names="REGIME", title="Servidores ativos — por regime", hole=0.45)
             st.plotly_chart(estilizar(fig), use_container_width=True)
-
-    if not df_ponto.empty and "DATA" in df_ponto.columns:
-        st.subheader("Movimentação de ponto — últimos registros")
-        por_dia = df_ponto.groupby(["DATA", "TIPO"]).size().reset_index(name="QTD")
-        if not por_dia.empty:
-            fig = px.bar(por_dia, x="DATA", y="QTD", color="TIPO", barmode="group", title="Check-in x Check-out por dia")
-            st.plotly_chart(estilizar(fig), use_container_width=True)
-
-# ───────────────────────────── 🕒 Check-in / Check-out ───────────────────
-elif pagina == "🕒 Check-in / Check-out":
-    st.title("🕒 Registro de Ponto — Check-in / Check-out")
-    st.caption(
-        "Registro rápido de entrada e saída do teletrabalho do dia. Grava "
-        "direto na aba 'ponto_teletrabalho' da planilha — não é preciso "
-        "abrir o Google Sheets."
-    )
-
-    df_sa = sio.load_sheet_df(sio.SHEET_SERVIDORES_ATIVOS, sio.HEADER_ROW[sio.SHEET_SERVIDORES_ATIVOS])
-    nome_col_sa = "NOME" if "NOME" in df_sa.columns else (df_sa.columns[0] if not df_sa.empty else None)
-    matricula_col_sa = "MATRÍCULA" if "MATRÍCULA" in df_sa.columns else None
-    servidores_ativos = sorted(df_sa[nome_col_sa].dropna().unique().tolist()) if nome_col_sa else []
-
-    with st.form("form_ponto", clear_on_submit=True):
-        c1, c2 = st.columns(2)
-        with c1:
-            servidor_sel = st.selectbox(
-                "Servidor", [OPCAO_VAZIA] + servidores_ativos + [OPCAO_NOVO_VALOR], key="ponto_servidor"
-            )
-            servidor_novo = (
-                st.text_input("Nome (se não estiver na lista)", key="ponto_servidor_novo")
-                if servidor_sel == OPCAO_NOVO_VALOR
-                else ""
-            )
-            tipo_registro = st.radio(
-                "Tipo de registro", ["Check-in (entrada)", "Check-out (saída)"], horizontal=True, key="ponto_tipo"
-            )
-        with c2:
-            data_registro = st.date_input("Data", value=dt.date.today(), key="ponto_data")
-            hora_registro = st.time_input("Horário", value=dt.datetime.now().time(), key="ponto_hora")
-            observacao_ponto = st.text_input("Observação (opcional)", key="ponto_obs")
-        enviado_ponto = st.form_submit_button("Registrar", use_container_width=True)
-
-    if enviado_ponto:
-        nome_final = servidor_novo.strip() if servidor_sel == OPCAO_NOVO_VALOR else (
-            servidor_sel if servidor_sel != OPCAO_VAZIA else ""
-        )
-        if not nome_final:
-            st.error("Selecione ou digite o nome do servidor.")
-        else:
-            matricula = ""
-            if matricula_col_sa and not df_sa.empty:
-                achado = df_sa[df_sa[nome_col_sa] == nome_final]
-                if not achado.empty:
-                    matricula = str(achado.iloc[0][matricula_col_sa])
-
-            tipo_final = "CHECK-IN" if tipo_registro.startswith("Check-in") else "CHECK-OUT"
-            row = {
-                "SERVIDOR": nome_final,
-                "MATRÍCULA": matricula,
-                "DATA": data_registro.strftime("%d/%m/%Y"),
-                "HORARIO": hora_registro.strftime("%H:%M"),
-                "TIPO": tipo_final,
-                "OBSERVAÇÃO": observacao_ponto,
-                "DATA_LANÇAMENTO": sio.timestamp(),
-                "USUÁRIO_LANÇAMENTO": st.session_state.get("usuario_logado", LOGIN_USUARIO),
-            }
-            try:
-                sio.get_or_create_worksheet(sio.SHEET_PONTO_TELETRABALHO, sio.HEADERS[sio.SHEET_PONTO_TELETRABALHO])
-                novo_id = sio.append_row(
-                    sio.SHEET_PONTO_TELETRABALHO, ["id"] + sio.HEADERS[sio.SHEET_PONTO_TELETRABALHO], row
-                )
-                feedback_salvo(f"{tipo_final} registrado para {nome_final} às {row['HORARIO']} (id {novo_id}).")
-                st.cache_data.clear()
-            except Exception as exc:
-                st.error(f"Falha ao registrar ponto: {exc}")
-
-    st.divider()
-    st.subheader("Registros recentes")
-    pontos = load_ponto()
-    if not pontos.empty:
-        ordenar_por = "DATA_LANÇAMENTO" if "DATA_LANÇAMENTO" in pontos.columns else pontos.columns[-1]
-        st.dataframe(
-            pontos.sort_values(ordenar_por, ascending=False), use_container_width=True, hide_index=True
-        )
-    else:
-        st.info("Nenhum registro de ponto ainda.")
 
 # ───────────────────────────── 📈 Produtividade ──────────────────────────
 elif pagina == "📈 Produtividade":
@@ -653,7 +541,6 @@ elif pagina == "🖨️ Relatórios":
         [
             "Produtividade (histórico parseado)",
             "Lançamentos de Produtividade",
-            "Registro de Ponto (Check-in-Check-out)",
             "Magistrados",
             "Servidores Ativos",
             "CNJ - Informações",
@@ -665,8 +552,6 @@ elif pagina == "🖨️ Relatórios":
         df = load_produtividade_historico()
     elif fonte == "Lançamentos de Produtividade":
         df = load_produtividade_lancamentos()
-    elif fonte == "Registro de Ponto (Check-in-Check-out)":
-        df = load_ponto()
     elif fonte == "Magistrados":
         df = sio.load_sheet_df(sio.SHEET_MAGISTRADOS, sio.HEADER_ROW[sio.SHEET_MAGISTRADOS])
     elif fonte == "Servidores Ativos":
