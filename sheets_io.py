@@ -78,6 +78,16 @@ HEADER_ROW = {
 @st.cache_resource(show_spinner=False)
 def get_client() -> gspread.Client:
     """Autentica via conta de serviço (credenciais em st.secrets)."""
+    if "gcp_service_account" not in st.secrets:
+        st.error(
+            "⚠️ Credenciais do Google não configuradas neste ambiente.\n\n"
+            "No Streamlit Cloud: abra o app → **⋮ (menu) → Settings → Secrets** "
+            "e cole ali o conteúdo do arquivo `secrets.toml` (seção "
+            "`[gcp_service_account]`), preenchido com os dados reais da conta "
+            "de serviço do Google Cloud. O modelo está em `secrets_toml.example` "
+            "no repositório."
+        )
+        st.stop()
     info = dict(st.secrets["gcp_service_account"])
     creds = Credentials.from_service_account_info(info, scopes=SCOPES)
     return gspread.authorize(creds)
