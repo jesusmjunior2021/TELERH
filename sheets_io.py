@@ -31,9 +31,6 @@ SHEET_SERVIDORES_DESLIGADOS = "servidores desligados"
 # (aditiva — não mexe no bloco irregular histórico da aba "produtividade").
 SHEET_PRODUTIVIDADE_LANCAMENTOS = "produtividade_lancamentos"
 
-# Aba nova, criada por este app, para check-in/check-out de teletrabalho.
-SHEET_PONTO_TELETRABALHO = "ponto_teletrabalho"
-
 # Cabeçalho REAL de cada aba tabular (na ordem em que aparece na planilha).
 # O rótulo "NOME" entre colchetes em servidores ativos/desligados marca uma
 # coluna que na planilha não tem cabeçalho de texto (célula vazia na linha 1),
@@ -65,10 +62,6 @@ HEADERS = {
     SHEET_PRODUTIVIDADE_LANCAMENTOS: [
         "SERVIDOR", "MATRÍCULA", "LOTAÇÃO", "MÊS/ANO", "META", "PRODUÇÃO",
         "PROCESSO", "OBSERVAÇÃO", "DATA_LANÇAMENTO", "USUÁRIO_LANÇAMENTO",
-    ],
-    SHEET_PONTO_TELETRABALHO: [
-        "SERVIDOR", "MATRÍCULA", "DATA", "HORARIO", "TIPO", "OBSERVAÇÃO",
-        "DATA_LANÇAMENTO", "USUÁRIO_LANÇAMENTO",
     ],
 }
 
