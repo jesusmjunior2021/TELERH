@@ -194,6 +194,23 @@ def _tabela_bloco(df: pd.DataFrame, colunas: list[str], largura_disponivel: floa
     return tabela
 
 
+def _altura_proporcional(png_bytes: bytes, largura_alvo: float) -> float:
+    """Calcula a altura correta para exibir a imagem em `largura_alvo`
+    mantendo a proporção REAL do PNG (lida via Pillow) — evita esticar ou
+    achatar o gráfico quando o bbox_inches='tight' do matplotlib recorta a
+    figura para um formato diferente do original."""
+    try:
+        from PIL import Image as PILImage
+
+        with PILImage.open(io.BytesIO(png_bytes)) as img:
+            largura_px, altura_px = img.size
+        if largura_px <= 0:
+            return largura_alvo * 0.31
+        return largura_alvo * (altura_px / largura_px)
+    except Exception:
+        return largura_alvo * 0.31
+
+
 def _grafico_produtividade_png(df: pd.DataFrame) -> bytes | None:
     """Gera um PNG simples de Meta x Produção por mês/ano (ordem cronológica),
     só quando as colunas existirem — usado nos relatórios de Produtividade.
@@ -241,7 +258,7 @@ def _grafico_produtividade_png(df: pd.DataFrame) -> bytes | None:
     fig.tight_layout()
 
     buf = io.BytesIO()
-    fig.savefig(buf, format="png")
+    fig.savefig(buf, format="png", bbox_inches="tight", pad_inches=0.15)
     plt.close(fig)
     buf.seek(0)
     return buf.getvalue()
@@ -302,7 +319,7 @@ def gerar_pdf(nome_aba: str, df: pd.DataFrame, filtros: dict[str, str] | None = 
 
     grafico_png = _grafico_produtividade_png(df) if not df.empty else None
     if grafico_png:
-        altura_grafico = largura_disponivel * (3.1 / 10)
+        altura_grafico = _altura_proporcional(grafico_png, largura_disponivel)
         elementos.append(Image(io.BytesIO(grafico_png), width=largura_disponivel, height=altura_grafico))
         elementos.append(Spacer(1, 10))
 
