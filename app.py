@@ -223,6 +223,12 @@ if not tela_login():
 
 
 # ───────────────────────────── Utilidades ────────────────────────────────
+def legenda_card(texto: str) -> None:
+    """Legenda de rodapé de um card de gráfico, em linguagem simples —
+    para o dado nunca aparecer sozinho, sem contexto do que ele significa."""
+    st.caption(f"💡 {texto}")
+
+
 def kpi_row(items: list[tuple[str, object]]) -> None:
     cols = st.columns(len(items))
     for c, (label, value) in zip(cols, items):
@@ -402,6 +408,7 @@ PAGINAS = [
     "🚪 Servidores Desligados",
     "📝 Lançar Produtividade Mensal",
     "🖨️ Relatórios",
+    "📚 Legislação",
 ]
 pagina = st.sidebar.radio("Navegação", PAGINAS, label_visibility="collapsed")
 
@@ -450,27 +457,101 @@ if pagina == "📊 Dashboard":
         ]
     )
 
-    c1, c2 = st.columns(2)
-    with c1:
-        if not df_sa.empty and "TIPO" in df_sa.columns:
-            fig = px.pie(df_sa, names="TIPO", title="Servidores ativos — por tipo de pedido", hole=0.45)
-            st.plotly_chart(estilizar(fig), use_container_width=True)
-    with c2:
-        if not df_sa.empty and "LOTAÇÃO" in df_sa.columns:
-            top_lot = df_sa["LOTAÇÃO"].value_counts().head(15).reset_index()
-            top_lot.columns = ["LOTAÇÃO", "QTD"]
-            fig = px.bar(top_lot, x="QTD", y="LOTAÇÃO", orientation="h", title="Top 15 lotações — servidores ativos")
-            fig.update_layout(yaxis={"categoryorder": "total ascending"})
-            st.plotly_chart(estilizar(fig), use_container_width=True)
+    st.write("")
+    st.subheader("Panorama em 4 gráficos")
+    st.caption(
+        "Cada card abaixo tem uma legenda explicando o que o gráfico mostra "
+        "e por que ele importa — o dado nunca aparece sozinho, sem contexto."
+    )
+    st.write("")
 
-    if not df_sa.empty and "GÊNERO" in df_sa.columns and "REGIME" in df_sa.columns:
-        c3, c4 = st.columns(2)
-        with c3:
-            fig = px.pie(df_sa, names="GÊNERO", title="Servidores ativos — por gênero", hole=0.45)
-            st.plotly_chart(estilizar(fig), use_container_width=True)
-        with c4:
-            fig = px.pie(df_sa, names="REGIME", title="Servidores ativos — por regime", hole=0.45)
-            st.plotly_chart(estilizar(fig), use_container_width=True)
+    # Linha 1 do quadrante
+    col_a, col_b = st.columns(2, gap="large")
+
+    with col_a:
+        with st.container(border=True):
+            st.markdown("**📌 Servidores por tipo de pedido de teletrabalho**")
+            if not df_sa.empty and "TIPO" in df_sa.columns:
+                contagem_tipo = df_sa["TIPO"].value_counts().reset_index()
+                contagem_tipo.columns = ["TIPO", "QTD"]
+                fig = px.bar(
+                    contagem_tipo, x="TIPO", y="QTD", text="QTD",
+                    color="TIPO", color_discrete_sequence=PLOTLY_COLORWAY,
+                )
+                fig.update_traces(textposition="outside")
+                fig.update_layout(showlegend=False, xaxis_title=None, yaxis_title="Servidores")
+                st.plotly_chart(estilizar(fig), use_container_width=True)
+                legenda_card(
+                    "Quantos servidores estão em cada tipo de pedido (ordinário ou "
+                    "especial). Ajuda a ver rapidamente qual modalidade é mais comum."
+                )
+            else:
+                st.info("Sem dados de 'TIPO' na aba de servidores ativos.")
+
+    with col_b:
+        with st.container(border=True):
+            st.markdown("**📌 Top 10 lotações com mais gente em teletrabalho**")
+            if not df_sa.empty and "LOTAÇÃO" in df_sa.columns:
+                top_lot = df_sa["LOTAÇÃO"].value_counts().head(10).reset_index()
+                top_lot.columns = ["LOTAÇÃO", "QTD"]
+                fig = px.bar(
+                    top_lot.sort_values("QTD"), x="QTD", y="LOTAÇÃO", orientation="h", text="QTD",
+                )
+                fig.update_traces(marker_color=AZUL_PRIMARIO, textposition="outside")
+                fig.update_layout(yaxis_title=None, xaxis_title="Servidores")
+                st.plotly_chart(estilizar(fig), use_container_width=True)
+                legenda_card(
+                    "As 10 varas/unidades com mais servidores em teletrabalho hoje — "
+                    "mostra onde o regime está mais concentrado."
+                )
+            else:
+                st.info("Sem dados de 'LOTAÇÃO' na aba de servidores ativos.")
+
+    st.write("")
+
+    # Linha 2 do quadrante
+    col_c, col_d = st.columns(2, gap="large")
+
+    with col_c:
+        with st.container(border=True):
+            st.markdown("**📌 Servidores por gênero, dentro de cada regime**")
+            if not df_sa.empty and "GÊNERO" in df_sa.columns and "REGIME" in df_sa.columns:
+                cruz = df_sa.groupby(["REGIME", "GÊNERO"]).size().reset_index(name="QTD")
+                fig = px.bar(
+                    cruz, x="REGIME", y="QTD", color="GÊNERO", barmode="group", text="QTD",
+                )
+                fig.update_traces(textposition="outside")
+                fig.update_layout(xaxis_title=None, yaxis_title="Servidores")
+                st.plotly_chart(estilizar(fig), use_container_width=True)
+                legenda_card(
+                    "Compara homens e mulheres em cada regime de teletrabalho — "
+                    "ajuda a enxergar se a distribuição está equilibrada."
+                )
+            else:
+                st.info("Sem dados de 'GÊNERO'/'REGIME' na aba de servidores ativos.")
+
+    with col_d:
+        with st.container(border=True):
+            st.markdown("**📌 Evolução da produtividade — Meta x Produção**")
+            hist_dash = load_produtividade_historico()
+            lanc_dash = load_produtividade_lancamentos()
+            combinado_dash = combinar_produtividade(hist_dash, lanc_dash)
+            if not combinado_dash.empty:
+                agregado = combinado_dash.groupby("mes_ano", as_index=False)[["meta", "producao"]].sum(min_count=1)
+                agregado = ud.ordenar_por_mes_ano(agregado, "mes_ano")
+                fig = px.line(
+                    agregado, x="mes_ano", y=["meta", "producao"], markers=True,
+                    category_orders={"mes_ano": agregado["mes_ano"].tolist()},
+                )
+                fig.update_layout(xaxis_title=None, yaxis_title="Total")
+                st.plotly_chart(estilizar(fig), use_container_width=True)
+                legenda_card(
+                    "Como a meta e a produção realizada vêm variando mês a mês, em "
+                    "ordem cronológica. Quando a linha de produção fica abaixo da "
+                    "de meta, é sinal de alerta para acompanhar de perto."
+                )
+            else:
+                st.info("Sem dados de produtividade parseados ainda.")
 
 # ───────────────────────────── 📈 Produtividade ──────────────────────────
 elif pagina == "📈 Produtividade":
@@ -867,6 +948,107 @@ elif pagina == "🖨️ Relatórios":
             )
         except Exception as exc:
             st.error(f"Falha ao gerar PDF: {exc}")
+
+# ───────────────────────────── 📚 Legislação ──────────────────────────────
+elif pagina == "📚 Legislação":
+    st.title("📚 Legislação do Teletrabalho — TJMA")
+    st.markdown("<span class='badge-leitura'>🔎 MODO LEITURA</span>", unsafe_allow_html=True)
+    st.caption(
+        "Base de referência com as normas e formulários oficiais do teletrabalho "
+        "no TJMA, com link direto para a página real do site do Tribunal. "
+        "Curada manualmente a partir do site institucional — não é uma busca "
+        "ao vivo a cada carregamento, por estabilidade e velocidade. Se algum "
+        "link parecer desatualizado, confira direto na aba **Fonte oficial** "
+        "de cada item."
+    )
+
+    st.subheader("⚖️ Normas que regulamentam o teletrabalho")
+    with st.container(border=True):
+        st.markdown("**Resolução-GP nº 99/2020**")
+        st.write(
+            "Norma-base que regulamenta o teletrabalho dos servidores no "
+            "Poder Judiciário do Maranhão: define diretrizes, condições de "
+            "ingresso/prorrogação/desligamento, e atribui à **Diretoria de "
+            "Recursos Humanos** a coordenação do regime. Também institui a "
+            "Comissão de Gestão do Teletrabalho."
+        )
+        cA, cB = st.columns(2)
+        with cA:
+            st.link_button(
+                "📄 Texto da resolução (PDF)",
+                "https://novogerenciador.tjma.jus.br/storage/arquivos/resolucoes_2020/f6ff8d0c512c48e744ec72324b4a8932.pdf",
+                use_container_width=True,
+            )
+        with cB:
+            st.link_button(
+                "🔗 Fonte oficial (notícia TJMA)",
+                "https://www.tjma.jus.br/midia/tj/noticia/501877/resolucao-regulamenta-teletrabalho-no-judiciario-maranhense",
+                use_container_width=True,
+            )
+
+    with st.container(border=True):
+        st.markdown("**Resolução-GP nº 88/2022**")
+        st.write(
+            "Altera a Resolução-GP nº 99/2020: acrescenta vedações ao "
+            "teletrabalho (unidade que não bateu metas do CNJ, avaliação "
+            "funcional abaixo de 'bom') e aumenta a meta de produtividade "
+            "exigida do servidor, de 15% para 30% acima da média da unidade."
+        )
+        st.link_button(
+            "🔗 Fonte oficial (notícia TJMA)",
+            "https://www.tjma.jus.br/midia/portal/noticia/507971/tjma-inclui-alteracoes-no-regulamento-do-teletrabalho",
+            use_container_width=True,
+        )
+
+    st.write("")
+    st.subheader("📝 Formulários oficiais para teletrabalho")
+    st.caption(
+        "Baixados direto da página **Documentos para Teletrabalho** da DRH — "
+        "mesmos arquivos que o servidor preenche para pedir, renovar ou "
+        "prestar contas do teletrabalho."
+    )
+
+    formularios = [
+        ("Requerimento Padrão — Teletrabalho Ordinário",
+         "https://novogerenciador.tjma.jus.br/storage/arquivos/ascom_tjma/requerimento_padrao_teletrabalho_ordinario_2024_06_03_2025_08_50_54.pdf"),
+        ("Requerimento Padrão — Teletrabalho Especial",
+         "https://novogerenciador.tjma.jus.br/storage/arquivos/ascom_tjma/requerimento_padrao_teletrabalho_especial_2024_06_03_2025_08_48_50.pdf"),
+        ("Plano Individual de Teletrabalho — Ordinário",
+         "https://novogerenciador.tjma.jus.br/storage/arquivos/ascom_tjma/plano_individual_de_teletrabalho_ordinario_2024_06_03_2025_08_44_42.pdf"),
+        ("Plano Individual de Teletrabalho — Especial",
+         "https://novogerenciador.tjma.jus.br/storage/arquivos/ascom_tjma/plano_individual_de_teletrabalho_especial_2024_06_03_2025_08_47_35.pdf"),
+        ("Relatório Trimestral de Produtividade (Ordinário e Especial)",
+         "https://novogerenciador.tjma.jus.br/storage/arquivos/ascom_tjma/novo_relatorio_trimestral_de_produtividade_individual_ordinario_e_especial_2024_06_03_2025_08_42_42.pdf"),
+    ]
+    col_f1, col_f2 = st.columns(2)
+    for i, (nome, url) in enumerate(formularios):
+        with (col_f1 if i % 2 == 0 else col_f2):
+            with st.container(border=True):
+                st.markdown(f"**{nome}**")
+                st.link_button("📄 Baixar PDF oficial", url, use_container_width=True)
+
+    st.write("")
+    st.subheader("🌐 Páginas institucionais de referência")
+    paginas_institucionais = [
+        ("Portal da Diretoria de Recursos Humanos (DRH)", "https://www.tjma.jus.br/hotsite/drh",
+         "Página inicial do hotsite da DRH — onde ficam os normativos, documentos e programas de gestão de pessoas."),
+        ("Documentos para Teletrabalho (DRH)", "https://www.tjma.jus.br/hotsite/drh/item/6317/0/teletrabalho",
+         "Seção específica com todos os formulários de teletrabalho para download."),
+        ("Normativos jurídicos da DRH", "https://www.tjma.jus.br/hotsite/drh/item/6314/0/normativos",
+         "Resoluções-GP de interesse da área de gestão de pessoas (não só teletrabalho)."),
+        ("Todas as Resoluções do TJMA", "https://www.tjma.jus.br/atos/tj/geral/0/132/pnao/resolusoes",
+         "Busca oficial de resoluções no site do Tribunal — use para conferir a versão mais atual."),
+        ("Todos os Atos do TJMA (busca geral)", "https://www.tjma.jus.br/atos/portal/pnao/todas-as-consultas-de-atos",
+         "Ponto único de busca de portarias, resoluções e demais atos normativos do Tribunal."),
+    ]
+    for nome, url, desc in paginas_institucionais:
+        with st.container(border=True):
+            col_nome, col_botao = st.columns([3, 1])
+            with col_nome:
+                st.markdown(f"**{nome}**")
+                st.caption(desc)
+            with col_botao:
+                st.link_button("Abrir ↗", url, use_container_width=True)
 
 # ───────────────────────────── Rodapé ─────────────────────────────────────
 st.markdown("<div class='rodape-app'>ADMJESUSIA 107805</div>", unsafe_allow_html=True)
