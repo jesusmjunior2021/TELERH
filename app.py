@@ -1,7 +1,7 @@
 # MAT-TELETRABALHO-001 · app.py
 # Painel de Teletrabalho TJ/MA — visualização + entrada de dados
 # Fonte única: planilha "Teletrabalho TJ/MA" (Google Sheets)
-# Adm. Jesus Martins Oliveira Junior — COGEX-MA/TJMA
+# COGEX-MA/TJMA
 
 from __future__ import annotations
 
@@ -65,6 +65,40 @@ st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 PLOTLY_COLORWAY = [AZUL, VERDE, AZUL_CLARO, CINZA, "#8FBF7F", "#A9B6C8"]
 px.defaults.color_discrete_sequence = PLOTLY_COLORWAY
 
+# ───────────────────────────── Login ──────────────────────────────────────
+LOGIN_USUARIO = "TELERH"
+LOGIN_SENHA = "RH@TELE"
+
+
+def tela_login() -> bool:
+    """Gate simples de usuário/senha. Retorna True se já autenticado."""
+    if st.session_state.get("autenticado"):
+        return True
+
+    st.markdown(
+        f"<h2 style='color:{AZUL};text-align:center;'>🏛️ Painel de Teletrabalho — TJ/MA</h2>",
+        unsafe_allow_html=True,
+    )
+    col_a, col_b, col_c = st.columns([1, 1.2, 1])
+    with col_b:
+        with st.form("form_login"):
+            st.subheader("Acesso restrito")
+            usuario = st.text_input("Usuário")
+            senha = st.text_input("Senha", type="password")
+            entrar = st.form_submit_button("Entrar", use_container_width=True)
+        if entrar:
+            if usuario.strip().upper() == LOGIN_USUARIO and senha == LOGIN_SENHA:
+                st.session_state["autenticado"] = True
+                st.session_state["usuario_logado"] = usuario.strip().upper()
+                st.rerun()
+            else:
+                st.error("Usuário ou senha incorretos.")
+    return False
+
+
+if not tela_login():
+    st.stop()
+
 
 # ───────────────────────────── Utilidades ────────────────────────────────
 def kpi_row(items: list[tuple[str, object]]) -> None:
@@ -108,7 +142,7 @@ def load_produtividade_lancamentos() -> pd.DataFrame:
 
 # ───────────────────────────── Sidebar / navegação ───────────────────────
 st.sidebar.title("🏛️ Teletrabalho TJ/MA")
-st.sidebar.caption("COGEX-MA · Adm. Jesus Martins Oliveira Junior")
+st.sidebar.caption("COGEX-MA/TJMA")
 
 PAGINAS = [
     "📊 Visão Geral",
@@ -359,7 +393,7 @@ elif pagina == "📝 Lançar Produtividade Mensal":
                 "PROCESSO": processo,
                 "OBSERVAÇÃO": observacao,
                 "DATA_LANÇAMENTO": sio.timestamp(),
-                "USUÁRIO_LANÇAMENTO": "Adm. Jesus Martins Oliveira Junior",
+                "USUÁRIO_LANÇAMENTO": st.session_state.get("usuario_logado", LOGIN_USUARIO),
             }
             try:
                 sio.get_or_create_worksheet(
@@ -422,3 +456,10 @@ elif pagina == "🖨️ Relatórios":
             file_name=f"relatorio_{fonte.split()[0].lower()}_{dt.date.today().isoformat()}.csv",
             mime="text/csv",
         )
+
+# ───────────────────────────── Rodapé ─────────────────────────────────────
+st.markdown(
+    "<div style='text-align:right; font-size:9px; color:#B9C0CA; "
+    "margin-top:40px;'>ADMJESUSIA 107805</div>",
+    unsafe_allow_html=True,
+)
