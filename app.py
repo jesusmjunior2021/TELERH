@@ -333,14 +333,24 @@ def campo_formulario(df_ref: pd.DataFrame, sheet_name: str, h: str):
     return st.text_input(label, key=f"{sheet_name}_{h}")
 
 
-@st.cache_data(ttl=120, show_spinner="⏳ Carregando dados da planilha (produtividade)...")
 def load_produtividade_historico() -> pd.DataFrame:
-    ws = sio.get_spreadsheet().worksheet(sio.SHEET_PRODUTIVIDADE)
-    values = ws.get_all_values()
-    return parse_produtividade(values)
+    """Parser da aba 'produtividade' — usa a mesma caixa de cache
+    compartilhada de sheets_io.py, então também se beneficia do cache
+    quente entre trocas de aba."""
+    chave = ("produtividade_historico_parseado",)
+    em_cache = sio.cache_get(chave)
+    if em_cache is not None:
+        return em_cache
+
+    with st.spinner("⏳ Carregando dados da planilha (produtividade)..."):
+        ws = sio.get_spreadsheet().worksheet(sio.SHEET_PRODUTIVIDADE)
+        values = ws.get_all_values()
+        df = parse_produtividade(values)
+
+    sio.cache_set(chave, df)
+    return df
 
 
-@st.cache_data(ttl=120, show_spinner="⏳ Carregando lançamentos da planilha...")
 def load_produtividade_lancamentos() -> pd.DataFrame:
     try:
         return sio.load_sheet_df(sio.SHEET_PRODUTIVIDADE_LANCAMENTOS, header_row=1)
@@ -397,7 +407,7 @@ pagina = st.sidebar.radio("Navegação", PAGINAS, label_visibility="collapsed")
 
 st.sidebar.divider()
 if st.sidebar.button("🔄 Recarregar dados da planilha"):
-    st.cache_data.clear()
+    sio.limpar_cache()
     st.rerun()
 
 st.sidebar.caption(
@@ -628,7 +638,7 @@ elif pagina in (
                 try:
                     novo_id = sio.append_row(sheet_name, ["id"] + headers, valores)
                     feedback_salvo(f"Registro salvo com id {novo_id} na aba '{sheet_name}'.")
-                    st.cache_data.clear()
+                    sio.limpar_cache()
                 except Exception as exc:
                     st.error(f"Falha ao gravar na planilha: {exc}")
 
@@ -735,7 +745,7 @@ elif pagina == "📝 Lançar Produtividade Mensal":
                     row,
                 )
                 feedback_salvo(f"Lançamento salvo com id {novo_id}.")
-                st.cache_data.clear()
+                sio.limpar_cache()
             except Exception as exc:
                 st.error(f"Falha ao gravar lançamento: {exc}")
 
