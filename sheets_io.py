@@ -75,7 +75,7 @@ HEADER_ROW = {
 }
 
 
-@st.cache_resource(show_spinner=False)
+@st.cache_resource(show_spinner="⏳ Conectando à planilha do Google Sheets...")
 def get_client() -> gspread.Client:
     """Autentica via conta de serviço (credenciais em st.secrets)."""
     if "gcp_service_account" not in st.secrets:
@@ -153,19 +153,45 @@ def _cabecalho_unico(header: list[str]) -> list[str]:
     return resultado
 
 
-@st.cache_data(ttl=120, show_spinner=False)
-def load_sheet_df(sheet_name: str, header_row: int = 1) -> pd.DataFrame:
-    """Carrega 100% das linhas de uma aba tabular em DataFrame, sem amostrar."""
-    ws = get_spreadsheet().worksheet(sheet_name)
-    values = ws.get_all_values()
+def _valores_para_df(values: list[list[str]], header_row: int) -> pd.DataFrame:
+    """Converte a matriz bruta (o que get_all_values()/values_batch_get()
+    devolvem) em DataFrame — cabeçalho deduplicado, linhas 100% vazias
+    removidas. Compartilhado entre carregamento aba-por-aba e em lote."""
     if len(values) < header_row:
         return pd.DataFrame()
     header = _cabecalho_unico(values[header_row - 1])
     rows = values[header_row:]
     df = pd.DataFrame(rows, columns=header)
-    # remove linhas 100% vazias
     df = df[~(df.apply(lambda r: all(str(v).strip() == "" for v in r), axis=1))]
     return df.reset_index(drop=True)
+
+
+@st.cache_data(ttl=120, show_spinner="⏳ Carregando dados da planilha...")
+def load_sheet_df(sheet_name: str, header_row: int = 1) -> pd.DataFrame:
+    """Carrega 100% das linhas de uma aba tabular em DataFrame, sem amostrar."""
+    ws = get_spreadsheet().worksheet(sheet_name)
+    values = ws.get_all_values()
+    return _valores_para_df(values, header_row)
+
+
+@st.cache_data(ttl=120, show_spinner="⏳ Carregando dados da planilha (várias abas de uma vez)...")
+def load_varias_abas(nomes_abas: tuple[str, ...]) -> dict[str, pd.DataFrame]:
+    """Carrega várias abas em UMA única chamada à API do Google Sheets
+    (recurso nativo `values_batch_get` — batchGet), em vez de uma chamada
+    HTTP por aba. Usado no Dashboard, que precisa de 4 abas ao mesmo tempo
+    — reduz o carregamento de ~4 idas-e-voltas para 1 só.
+    `nomes_abas` é uma tupla (precisa ser hashável para o cache do Streamlit).
+    """
+    sh = get_spreadsheet()
+    resultado = sh.values_batch_get(list(nomes_abas))
+    value_ranges = resultado.get("valueRanges", [])
+
+    dfs: dict[str, pd.DataFrame] = {}
+    for nome_aba, vr in zip(nomes_abas, value_ranges):
+        values = vr.get("values", [])
+        header_row = HEADER_ROW.get(nome_aba, 1)
+        dfs[nome_aba] = _valores_para_df(values, header_row)
+    return dfs
 
 
 def next_id(df: pd.DataFrame, id_col: str = "id") -> int:
