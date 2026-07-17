@@ -14,8 +14,11 @@ import streamlit as st
 
 import sheets_io as sio
 import relatorios
-import utils_dados as ud
 from parser_produtividade import parse_produtividade
+
+# Atalho: reaproveita as funções de ordenação/sanitização que moram em
+# relatorios.py, para não depender de mais nenhum arquivo do projeto.
+ud = relatorios
 
 # ───────────────────────────── Config geral ──────────────────────────────
 st.set_page_config(
