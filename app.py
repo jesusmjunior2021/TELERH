@@ -30,6 +30,9 @@ AZUL_PAINEL_2 = "#1A2740"
 AZUL_PRIMARIO = "#2F6FED"
 AZUL_CLARO = "#5B8DEF"
 AZUL_ESCURO = "#1B3A6B"
+TEAL_INSERCAO = "#0EA5A5"
+TEAL_INSERCAO_CLARO = "#2DD4BF"
+AMBAR_RELATORIO = "#F5B942"
 BORDA = "#24314A"
 TEXTO_CLARO = "#E7ECF5"
 TEXTO_SECUNDARIO = "#9AA7BD"
@@ -72,9 +75,46 @@ div[data-testid="stMetricValue"] {{ color: {TEXTO_CLARO} !important; }}
 
 .stForm {{
     border: 1px solid {BORDA};
+    border-left: 4px solid {TEAL_INSERCAO};
     background-color: {AZUL_PAINEL};
     border-radius: 12px;
     padding: 18px;
+}}
+
+/* Selos de contexto — sinalizam se a tela é de inserção, leitura ou relatório */
+.badge-insercao, .badge-leitura, .badge-relatorio {{
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+    margin-bottom: 10px;
+}}
+.badge-insercao {{
+    background: rgba(14,165,165,0.16);
+    color: {TEAL_INSERCAO_CLARO};
+    border: 1px solid {TEAL_INSERCAO_CLARO};
+}}
+.badge-leitura {{
+    background: rgba(91,141,239,0.16);
+    color: {AZUL_CLARO};
+    border: 1px solid {AZUL_CLARO};
+}}
+.badge-relatorio {{
+    background: rgba(245,185,66,0.16);
+    color: {AMBAR_RELATORIO};
+    border: 1px solid {AMBAR_RELATORIO};
+}}
+
+.aviso-app {{
+    background: rgba(245,185,66,0.10);
+    border: 1px solid {AMBAR_RELATORIO};
+    border-radius: 10px;
+    padding: 10px 14px;
+    font-size: 13px;
+    color: {TEXTO_CLARO};
+    margin-bottom: 12px;
 }}
 
 h1, h2, h3 {{ color: {TEXTO_CLARO}; }}
@@ -265,6 +305,37 @@ def load_produtividade_lancamentos() -> pd.DataFrame:
         return pd.DataFrame(columns=["id"] + sio.HEADERS[sio.SHEET_PRODUTIVIDADE_LANCAMENTOS])
 
 
+def combinar_produtividade(hist: pd.DataFrame, lanc: pd.DataFrame) -> pd.DataFrame:
+    """Junta o histórico parseado da aba 'produtividade' com os lançamentos
+    manuais feitos pelo app, num único formato, para que os gráficos e
+    filtros reflitam os dois — sem alterar nenhum dos dois na origem."""
+    hist2 = hist.copy()
+    if not hist2.empty:
+        hist2["origem"] = "histórico (planilha)"
+
+    if lanc.empty:
+        return hist2
+
+    lanc2 = lanc.rename(
+        columns={
+            "SERVIDOR": "servidor",
+            "MATRÍCULA": "matricula",
+            "LOTAÇÃO": "lotacao",
+            "MÊS/ANO": "mes_ano",
+            "META": "meta",
+            "PRODUÇÃO": "producao",
+            "PROCESSO": "processo_mes",
+            "OBSERVAÇÃO": "observacao",
+        }
+    ).copy()
+    lanc2["meta"] = pd.to_numeric(lanc2.get("meta"), errors="coerce")
+    lanc2["producao"] = pd.to_numeric(lanc2.get("producao"), errors="coerce")
+    lanc2["superavit"] = lanc2["producao"] - lanc2["meta"]
+    lanc2["origem"] = "lançamento manual (app)"
+
+    return pd.concat([hist2, lanc2], ignore_index=True, sort=False)
+
+
 # ───────────────────────────── Sidebar / navegação ───────────────────────
 st.sidebar.title("🏛️ Teletrabalho TJ/MA")
 st.sidebar.caption("COGEX-MA/TJMA")
@@ -297,6 +368,7 @@ st.sidebar.caption(
 # ───────────────────────────── 📊 Dashboard ───────────────────────────────
 if pagina == "📊 Dashboard":
     st.title("📊 Dashboard — Teletrabalho TJ/MA")
+    st.markdown("<span class='badge-leitura'>🔎 MODO LEITURA</span>", unsafe_allow_html=True)
 
     df_mag = sio.load_sheet_df(sio.SHEET_MAGISTRADOS, sio.HEADER_ROW[sio.SHEET_MAGISTRADOS])
     df_sa = sio.load_sheet_df(sio.SHEET_SERVIDORES_ATIVOS, sio.HEADER_ROW[sio.SHEET_SERVIDORES_ATIVOS])
@@ -345,24 +417,27 @@ elif pagina == "📈 Produtividade":
 
     hist = load_produtividade_historico()
     lanc = load_produtividade_lancamentos()
+    combinado = combinar_produtividade(hist, lanc)
+
+    st.markdown("<span class='badge-leitura'>🔎 MODO LEITURA</span>", unsafe_allow_html=True)
 
     tab_v, tab_d = st.tabs(["🔎 Visualização", "🗂️ Dados brutos"])
 
     with tab_v:
-        if hist.empty:
-            st.warning("Nenhum registro parseado a partir da aba 'produtividade'.")
+        if combinado.empty:
+            st.warning("Nenhum registro parseado a partir da aba 'produtividade' nem lançado pelo app.")
         else:
             f1, f2, f3 = st.columns(3)
             with f1:
-                servidores = sorted(hist["servidor"].dropna().unique().tolist())
+                servidores = sorted(combinado["servidor"].dropna().unique().tolist())
                 sel_serv = st.multiselect("Servidor", servidores, key="prod_serv")
             with f2:
-                meses = sorted(hist["mes_ano"].dropna().unique().tolist())
+                meses = sorted(combinado["mes_ano"].dropna().unique().tolist())
                 sel_mes = st.multiselect("Mês/Ano", meses, key="prod_mes")
             with f3:
                 min_pct = st.slider("Superávit mínimo (produção - meta)", -5000, 5000, -5000, key="prod_sup")
 
-            dff = hist.copy()
+            dff = combinado.copy()
             if sel_serv:
                 dff = dff[dff["servidor"].isin(sel_serv)]
             if sel_mes:
@@ -375,19 +450,26 @@ elif pagina == "📈 Produtividade":
                     x="mes_ano",
                     y=["meta", "producao"],
                     barmode="group",
-                    title="Meta x Produção por mês (filtro aplicado)",
+                    title="Meta x Produção por mês — histórico + lançamentos do app (filtro aplicado)",
                     facet_col="servidor" if dff["servidor"].nunique() <= 4 else None,
                 )
                 st.plotly_chart(estilizar(fig), use_container_width=True)
 
+            st.caption(
+                "Coluna **origem** mostra se a linha vem do histórico original da "
+                "planilha ou de um lançamento feito por este app."
+            )
             st.dataframe(dff, use_container_width=True, hide_index=True)
 
-        if not lanc.empty:
-            st.subheader("Lançamentos manuais (aba produtividade_lancamentos)")
-            st.dataframe(lanc, use_container_width=True, hide_index=True)
-
     with tab_d:
-        st.dataframe(hist, use_container_width=True, hide_index=True)
+        sub_hist, sub_lanc = st.tabs(["Histórico (planilha)", "Lançamentos manuais (app)"])
+        with sub_hist:
+            st.dataframe(hist, use_container_width=True, hide_index=True)
+        with sub_lanc:
+            if lanc.empty:
+                st.info("Nenhum lançamento manual ainda.")
+            else:
+                st.dataframe(lanc, use_container_width=True, hide_index=True)
 
 # ───────────────────────────── Abas tabulares padrão ─────────────────────
 elif pagina in (
@@ -412,6 +494,7 @@ elif pagina in (
     tab_v, tab_e = st.tabs(["🔎 Visualização", "➕ Inserir dado"])
 
     with tab_v:
+        st.markdown("<span class='badge-leitura'>🔎 MODO LEITURA</span>", unsafe_allow_html=True)
         cols_f = st.columns(3)
         dff = df.copy()
         filtraveis = [c for c in headers if c.strip() in (
@@ -443,6 +526,14 @@ elif pagina in (
         st.dataframe(dff, use_container_width=True, hide_index=True)
 
     with tab_e:
+        st.markdown("<span class='badge-insercao'>✏️ MODO INSERÇÃO — grava na planilha</span>", unsafe_allow_html=True)
+        st.markdown(
+            "<div class='aviso-app'>⚠️ A partir de agora, servidores, magistrados e demais "
+            "registros novos devem ser cadastrados <strong>somente por este formulário</strong>. "
+            "Editar a planilha diretamente pode quebrar a formatação e o parser que alimenta "
+            "os relatórios.</div>",
+            unsafe_allow_html=True,
+        )
         st.caption(
             "Formulário reflete exatamente as colunas da aba na planilha. "
             "Campos com valores conhecidos viram caixa de seleção — escolha "
@@ -470,37 +561,83 @@ elif pagina in (
 # ───────────────────────────── 📝 Lançar Produtividade Mensal ────────────
 elif pagina == "📝 Lançar Produtividade Mensal":
     st.title("📝 Lançar Produtividade Mensal")
+    st.markdown("<span class='badge-insercao'>✏️ MODO INSERÇÃO — grava na planilha</span>", unsafe_allow_html=True)
     st.caption(
         "A aba original 'produtividade' tem formatação manual em blocos e "
         "**não é editada diretamente** por este app, para não corromper o "
         "histórico. Os lançamentos novos vão para a aba aditiva "
         "'produtividade_lancamentos' e entram automaticamente no painel de "
-        "Produtividade."
+        "Produtividade — nenhum registro existente é apagado ou sobrescrito."
     )
 
     hist = load_produtividade_historico()
-    servidores_conhecidos = sorted(hist["servidor"].dropna().unique().tolist()) if not hist.empty else []
+    df_sa = sio.load_sheet_df(sio.SHEET_SERVIDORES_ATIVOS, sio.HEADER_ROW[sio.SHEET_SERVIDORES_ATIVOS])
+    nome_col_sa = "NOME" if "NOME" in df_sa.columns else (df_sa.columns[0] if not df_sa.empty else None)
+
+    servidores_hist = set(hist["servidor"].dropna().unique().tolist()) if not hist.empty else set()
+    servidores_ativos_nomes = set(df_sa[nome_col_sa].dropna().unique().tolist()) if nome_col_sa else set()
+    servidores_conhecidos = sorted(servidores_hist | servidores_ativos_nomes)
+
+    # Selectbox de servidor FORA do form: precisa disparar rerun na hora para
+    # já buscar matrícula/lotação reais da aba "servidores ativos" (convergência
+    # de dados) antes de o usuário preencher o resto do formulário.
+    servidor_sel = st.selectbox(
+        "Servidor", [OPCAO_VAZIA] + servidores_conhecidos + [OPCAO_NOVO_VALOR], key="prodm_servidor"
+    )
+    servidor_novo = (
+        st.text_input("Nome do novo servidor", key="prodm_servidor_novo")
+        if servidor_sel == OPCAO_NOVO_VALOR
+        else ""
+    )
+    nome_final = servidor_novo.strip() if servidor_sel == OPCAO_NOVO_VALOR else (
+        servidor_sel if servidor_sel != OPCAO_VAZIA else ""
+    )
+
+    matricula_padrao, lotacao_padrao = "", ""
+    if nome_final and nome_col_sa and not df_sa.empty:
+        achado = df_sa[df_sa[nome_col_sa] == nome_final]
+        if not achado.empty:
+            if "MATRÍCULA" in achado.columns:
+                matricula_padrao = str(achado.iloc[0]["MATRÍCULA"]).strip()
+            if "LOTAÇÃO" in achado.columns:
+                lotacao_padrao = str(achado.iloc[0]["LOTAÇÃO"]).strip()
+            if matricula_padrao or lotacao_padrao:
+                st.caption(
+                    "🔗 Matrícula e lotação preenchidas automaticamente a partir "
+                    "da aba 'servidores ativos' — confira antes de salvar."
+                )
 
     with st.form("form_lancamento_mensal", clear_on_submit=True):
         c1, c2 = st.columns(2)
         with c1:
-            servidor = st.selectbox("Servidor (existente)", [""] + servidores_conhecidos)
-            servidor_novo = st.text_input("Ou digite um servidor novo")
-            matricula = st.text_input("Matrícula")
-            lotacao = st.text_input("Lotação")
+            matricula = st.text_input("Matrícula", value=matricula_padrao, key="prodm_matricula")
+            lotacao = st.text_input("Lotação", value=lotacao_padrao, key="prodm_lotacao")
+            mes_ano = st.text_input("Mês/Ano (ex.: jul26)", key="prodm_mes")
         with c2:
-            mes_ano = st.text_input("Mês/Ano (ex.: jul26)")
-            meta = st.number_input("Meta", min_value=0, step=1)
-            producao = st.number_input("Produção", min_value=0, step=1)
-            processo = st.text_input("Processo (se houver)")
-        observacao = st.text_area("Observação")
+            meta = st.number_input("Meta", min_value=0, step=1, key="prodm_meta")
+            producao = st.number_input("Produção", min_value=0, step=1, key="prodm_producao")
+            processo = st.text_input("Processo (se houver)", key="prodm_processo")
+        observacao = st.text_area("Observação", key="prodm_obs")
         enviado = st.form_submit_button("Salvar lançamento", use_container_width=True)
 
     if enviado:
-        nome_final = (servidor_novo or servidor).strip()
         if not nome_final or not mes_ano.strip():
             st.error("Informe ao menos o servidor e o mês/ano.")
         else:
+            lanc_existente = load_produtividade_lancamentos()
+            ja_existe = False
+            if not lanc_existente.empty and {"SERVIDOR", "MÊS/ANO"}.issubset(lanc_existente.columns):
+                ja_existe = not lanc_existente[
+                    (lanc_existente["SERVIDOR"] == nome_final)
+                    & (lanc_existente["MÊS/ANO"] == mes_ano.strip())
+                ].empty
+            if ja_existe:
+                st.warning(
+                    f"Já existe lançamento de **{nome_final}** para **{mes_ano.strip()}**. "
+                    "O registro novo foi adicionado como uma linha à parte — nada do "
+                    "lançamento anterior foi apagado ou alterado. Revise em "
+                    "'📈 Produtividade → Dados brutos' se não era essa a intenção."
+                )
             row = {
                 "SERVIDOR": nome_final,
                 "MATRÍCULA": matricula,
@@ -531,6 +668,7 @@ elif pagina == "📝 Lançar Produtividade Mensal":
 # ───────────────────────────── 🖨️ Relatórios ─────────────────────────────
 elif pagina == "🖨️ Relatórios":
     st.title("🖨️ Emissão de Relatórios")
+    st.markdown("<span class='badge-relatorio'>🖨️ EMISSÃO DE RELATÓRIO</span>", unsafe_allow_html=True)
     st.caption(
         "Relatórios com timbre da Diretoria de RH do TJMA, filtráveis por "
         "aba de origem, prontos para impressão (HTML) ou distribuição (PDF)."
