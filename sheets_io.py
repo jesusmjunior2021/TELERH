@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import time
 from typing import Optional
 
 import gspread
@@ -73,6 +74,47 @@ HEADER_ROW = {
     SHEET_CNJ: 2,
     SHEET_SERVIDORES_DESLIGADOS: 1,
 }
+
+
+# ─────────────────────────── Cache quente unificado ───────────────────────
+# Uma única "caixa" de cache em RAM (por sessão do navegador), compartilhada
+# por TODAS as formas de leitura — carregar uma aba sozinha ou em lote
+# alimenta o mesmo cache, então trocar de aba no menu lateral não refaz a
+# leitura da planilha se o dado já estiver quente (~120s de validade).
+#
+# Escrita NUNCA passa por aqui: append_row() sempre fala direto com o
+# Google Sheets, e ao final invalida esta caixa inteira (limpar_cache),
+# para a próxima leitura trazer o dado real, nunca uma versão velha.
+CACHE_TTL_SEGUNDOS = 120
+_CHAVE_CACHE_SESSAO = "_cache_planilha_ram"
+
+
+def _cache() -> dict:
+    if _CHAVE_CACHE_SESSAO not in st.session_state:
+        st.session_state[_CHAVE_CACHE_SESSAO] = {}
+    return st.session_state[_CHAVE_CACHE_SESSAO]
+
+
+def cache_get(chave):
+    """Devolve o valor em cache se ainda estiver quente, senão None."""
+    entrada = _cache().get(chave)
+    if entrada is None:
+        return None
+    valor, carimbo_tempo = entrada
+    if (time.time() - carimbo_tempo) > CACHE_TTL_SEGUNDOS:
+        return None
+    return valor
+
+
+def cache_set(chave, valor) -> None:
+    _cache()[chave] = (valor, time.time())
+
+
+def limpar_cache() -> None:
+    """Invalida TODO o cache de leitura. Chamar sempre logo após qualquer
+    escrita bem-sucedida na planilha (append_row, criação de aba etc.) —
+    garante que a próxima leitura busca o dado real, nunca o antigo."""
+    st.session_state[_CHAVE_CACHE_SESSAO] = {}
 
 
 @st.cache_resource(show_spinner="⏳ Conectando à planilha do Google Sheets...")
@@ -166,32 +208,57 @@ def _valores_para_df(values: list[list[str]], header_row: int) -> pd.DataFrame:
     return df.reset_index(drop=True)
 
 
-@st.cache_data(ttl=120, show_spinner="⏳ Carregando dados da planilha...")
 def load_sheet_df(sheet_name: str, header_row: int = 1) -> pd.DataFrame:
-    """Carrega 100% das linhas de uma aba tabular em DataFrame, sem amostrar."""
-    ws = get_spreadsheet().worksheet(sheet_name)
-    values = ws.get_all_values()
-    return _valores_para_df(values, header_row)
+    """Carrega 100% das linhas de uma aba tabular em DataFrame, sem amostrar.
+    Serve do cache quente se disponível — só fala com o Google Sheets se o
+    dado não estiver em RAM ainda ou tiver expirado (~120s)."""
+    chave = ("aba", sheet_name, header_row)
+    em_cache = cache_get(chave)
+    if em_cache is not None:
+        return em_cache
+
+    with st.spinner(f"⏳ Carregando dados da planilha ({sheet_name})..."):
+        ws = get_spreadsheet().worksheet(sheet_name)
+        values = ws.get_all_values()
+        df = _valores_para_df(values, header_row)
+
+    cache_set(chave, df)
+    return df
 
 
-@st.cache_data(ttl=120, show_spinner="⏳ Carregando dados da planilha (várias abas de uma vez)...")
 def load_varias_abas(nomes_abas: tuple[str, ...]) -> dict[str, pd.DataFrame]:
-    """Carrega várias abas em UMA única chamada à API do Google Sheets
-    (recurso nativo `values_batch_get` — batchGet), em vez de uma chamada
-    HTTP por aba. Usado no Dashboard, que precisa de 4 abas ao mesmo tempo
-    — reduz o carregamento de ~4 idas-e-voltas para 1 só.
-    `nomes_abas` é uma tupla (precisa ser hashável para o cache do Streamlit).
+    """Carrega várias abas de uma vez. Para as que já estão quentes no
+    cache, não faz nenhuma chamada de rede. Para as que faltam, busca todas
+    juntas numa ÚNICA chamada à API do Google Sheets (recurso nativo
+    `values_batch_get`/batchGet) — e alimenta o MESMO cache que
+    `load_sheet_df` usa, então uma leitura em lote aqui deixa a aba pronta
+    (instantânea) se o usuário for até a aba individual dela em seguida,
+    e vice-versa.
+    `nomes_abas` precisa ser uma tupla (ordem estável).
     """
-    sh = get_spreadsheet()
-    resultado = sh.values_batch_get(list(nomes_abas))
-    value_ranges = resultado.get("valueRanges", [])
+    resultado: dict[str, pd.DataFrame] = {}
+    faltantes: list[str] = []
 
-    dfs: dict[str, pd.DataFrame] = {}
-    for nome_aba, vr in zip(nomes_abas, value_ranges):
-        values = vr.get("values", [])
-        header_row = HEADER_ROW.get(nome_aba, 1)
-        dfs[nome_aba] = _valores_para_df(values, header_row)
-    return dfs
+    for nome_aba in nomes_abas:
+        chave = ("aba", nome_aba, HEADER_ROW.get(nome_aba, 1))
+        em_cache = cache_get(chave)
+        if em_cache is not None:
+            resultado[nome_aba] = em_cache
+        else:
+            faltantes.append(nome_aba)
+
+    if faltantes:
+        with st.spinner(f"⏳ Carregando dados da planilha ({len(faltantes)} aba(s))..."):
+            sh = get_spreadsheet()
+            resposta = sh.values_batch_get(faltantes)
+            value_ranges = resposta.get("valueRanges", [])
+            for nome_aba, vr in zip(faltantes, value_ranges):
+                header_row = HEADER_ROW.get(nome_aba, 1)
+                df = _valores_para_df(vr.get("values", []), header_row)
+                resultado[nome_aba] = df
+                cache_set(("aba", nome_aba, header_row), df)
+
+    return resultado
 
 
 def next_id(df: pd.DataFrame, id_col: str = "id") -> int:
@@ -203,7 +270,9 @@ def next_id(df: pd.DataFrame, id_col: str = "id") -> int:
 
 def append_row(sheet_name: str, headers_with_id: list[str], row_dict: dict) -> int:
     """Acrescenta UMA linha ao final da aba, gerando o próximo id.
-    Nunca sobrescreve linha existente — sempre append."""
+    Nunca sobrescreve linha existente — sempre append. Fala DIRETO com o
+    Google Sheets (nunca usa dado em cache para decidir o que escrever) e,
+    ao terminar, invalida o cache de leitura inteiro."""
     ws = get_spreadsheet().worksheet(sheet_name)
     values = ws.get_all_values()
     header_row_idx = 1
@@ -217,7 +286,7 @@ def append_row(sheet_name: str, headers_with_id: list[str], row_dict: dict) -> i
     new_id = next_id(df_existing, id_col=header[0] if header else "id")
     row = [new_id] + [row_dict.get(h, "") for h in header[1:]]
     ws.append_row(row, value_input_option="USER_ENTERED")
-    load_sheet_df.clear()
+    limpar_cache()
     return new_id
 
 
