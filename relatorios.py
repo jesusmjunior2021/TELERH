@@ -11,6 +11,7 @@ import base64
 import datetime as dt
 import html
 import io
+import re
 
 import pandas as pd
 from reportlab.lib import colors
@@ -27,7 +28,79 @@ from reportlab.platypus import (
     TableStyle,
 )
 
-from utils_dados import chave_mes_ano, ordenar_por_mes_ano, valor_texto
+# ─────────────────────── Utilitários de dados (embutidos) ─────────────────
+# Antes viviam num módulo separado (utils_dados.py); trazidos para cá para
+# que este arquivo não dependa de mais nenhum outro arquivo do projeto além
+# dos pacotes instalados via requirements.txt.
+
+MESES_PT = {
+    "jan": 1, "fev": 2, "mar": 3, "abr": 4, "mai": 5, "jun": 6,
+    "jul": 7, "ago": 8, "set": 9, "out": 10, "nov": 11, "dez": 12,
+}
+_VAZIOS_TEXTUAIS = {"nan", "none", "nat", "<na>", ""}
+
+
+def valor_texto(v) -> str:
+    """Converte qualquer valor de célula (float NaN, None, número, string)
+    em texto de exibição seguro — nunca deixa passar 'nan'/'None' cru, que é
+    como o pandas mais novo representa ausência de dado ao converter tipos
+    mistos. Números inteiros perdem o '.0' à toa (ex.: 100.0 -> '100')."""
+    if v is None:
+        return ""
+    if isinstance(v, float):
+        if pd.isna(v):
+            return ""
+        if v.is_integer():
+            return str(int(v))
+        return str(v)
+    s = str(v).strip()
+    return "" if s.lower() in _VAZIOS_TEXTUAIS else s
+
+
+def chave_mes_ano(valor) -> tuple[int, int, str]:
+    """Converte um texto tipo 'jun26', 'jun/2026', '06/2026' em chave
+    ordenável (ano, mês, texto original). Formatos não reconhecidos vão
+    para o final da lista, mantidos na ordem em que apareceram."""
+    texto = valor_texto(valor).lower()
+    if not texto:
+        return (9999, 99, texto)
+
+    m = re.match(r"([a-zç]{3,})\D*(\d{2,4})", texto)
+    if m:
+        mes = MESES_PT.get(m.group(1)[:3], 99)
+        ano = int(m.group(2))
+        ano = ano if ano > 100 else 2000 + ano
+        return (ano, mes, texto)
+
+    m2 = re.match(r"(\d{1,2})\D+(\d{2,4})", texto)
+    if m2:
+        mes = int(m2.group(1))
+        ano = int(m2.group(2))
+        ano = ano if ano > 100 else 2000 + ano
+        if 1 <= mes <= 12:
+            return (ano, mes, texto)
+
+    return (9999, 99, texto)
+
+
+def ordenar_por_mes_ano(df: pd.DataFrame, coluna: str = "mes_ano") -> pd.DataFrame:
+    """Retorna o DataFrame ordenado cronologicamente pela coluna de mês/ano
+    informada, sem alterar o DataFrame original."""
+    if df.empty or coluna not in df.columns:
+        return df
+    df2 = df.copy()
+    df2["_ordem_tmp"] = df2[coluna].map(chave_mes_ano)
+    df2 = df2.sort_values("_ordem_tmp").drop(columns="_ordem_tmp")
+    return df2.reset_index(drop=True)
+
+
+def meses_ordenados(valores) -> list[str]:
+    """Ordena uma lista/coleção de textos de mês/ano em ordem cronológica
+    (para popular multiselect, eixo de gráfico etc.)."""
+    return sorted({valor_texto(v) for v in valores if valor_texto(v)}, key=chave_mes_ano)
+
+
+# ─────────────────────────── Geração de relatórios ────────────────────────
 
 ORGAO = "DIRETORIA DE RH DO TJMA"
 SISTEMA = "TELETRABALHO"
