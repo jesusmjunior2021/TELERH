@@ -14,6 +14,7 @@ import streamlit as st
 
 import sheets_io as sio
 import relatorios
+import utils_dados as ud
 from parser_produtividade import parse_produtividade
 
 # ───────────────────────────── Config geral ──────────────────────────────
@@ -240,6 +241,45 @@ def df_to_excel_bytes(sheets: dict[str, pd.DataFrame]) -> bytes:
     return buf.getvalue()
 
 
+def botoes_exportacao(
+    nome_relatorio: str,
+    df: pd.DataFrame,
+    key_prefix: str,
+    filtros: dict[str, str] | None = None,
+) -> None:
+    """Botões de exportação (Excel/HTML/PDF) — mesmos dados exatos que estão
+    na tela, com timbre institucional, disponíveis direto em cada aba (sem
+    precisar ir até 'Relatórios' para tirar um PDF rápido)."""
+    st.markdown("<span class='badge-relatorio'>📤 Exportar esta visualização</span>", unsafe_allow_html=True)
+    nome_arquivo_base = f"{key_prefix}_{dt.date.today().isoformat()}"
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        xlsx_bytes = df_to_excel_bytes({nome_relatorio[:31]: df})
+        st.download_button(
+            "⬇️ Excel (.xlsx)", data=xlsx_bytes, file_name=f"{nome_arquivo_base}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True, key=f"{key_prefix}_xlsx",
+        )
+    with col2:
+        try:
+            html_str = relatorios.gerar_html(nome_relatorio, df, filtros)
+            st.download_button(
+                "⬇️ HTML (impressão)", data=html_str.encode("utf-8"), file_name=f"{nome_arquivo_base}.html",
+                mime="text/html", use_container_width=True, key=f"{key_prefix}_html",
+            )
+        except Exception as exc:
+            st.error(f"Falha ao gerar HTML: {exc}")
+    with col3:
+        try:
+            pdf_bytes = relatorios.gerar_pdf(nome_relatorio, df, filtros)
+            st.download_button(
+                "⬇️ PDF", data=pdf_bytes, file_name=f"{nome_arquivo_base}.pdf",
+                mime="application/pdf", use_container_width=True, key=f"{key_prefix}_pdf",
+            )
+        except Exception as exc:
+            st.error(f"Falha ao gerar PDF: {exc}")
+
+
 def filter_multiselect(df: pd.DataFrame, col: str, label: str, key: str) -> pd.DataFrame:
     if col not in df.columns:
         return df
@@ -290,14 +330,14 @@ def campo_formulario(df_ref: pd.DataFrame, sheet_name: str, h: str):
     return st.text_input(label, key=f"{sheet_name}_{h}")
 
 
-@st.cache_data(ttl=120, show_spinner=False)
+@st.cache_data(ttl=120, show_spinner="⏳ Carregando dados da planilha (produtividade)...")
 def load_produtividade_historico() -> pd.DataFrame:
     ws = sio.get_spreadsheet().worksheet(sio.SHEET_PRODUTIVIDADE)
     values = ws.get_all_values()
     return parse_produtividade(values)
 
 
-@st.cache_data(ttl=120, show_spinner=False)
+@st.cache_data(ttl=120, show_spinner="⏳ Carregando lançamentos da planilha...")
 def load_produtividade_lancamentos() -> pd.DataFrame:
     try:
         return sio.load_sheet_df(sio.SHEET_PRODUTIVIDADE_LANCAMENTOS, header_row=1)
@@ -432,7 +472,7 @@ elif pagina == "📈 Produtividade":
                 servidores = sorted(combinado["servidor"].dropna().unique().tolist())
                 sel_serv = st.multiselect("Servidor", servidores, key="prod_serv")
             with f2:
-                meses = sorted(combinado["mes_ano"].dropna().unique().tolist())
+                meses = ud.meses_ordenados(combinado["mes_ano"].dropna().tolist())
                 sel_mes = st.multiselect("Mês/Ano", meses, key="prod_mes")
             with f3:
                 min_pct = st.slider("Superávit mínimo (produção - meta)", -5000, 5000, -5000, key="prod_sup")
@@ -443,15 +483,17 @@ elif pagina == "📈 Produtividade":
             if sel_mes:
                 dff = dff[dff["mes_ano"].isin(sel_mes)]
             dff = dff[dff["superavit"].fillna(-999999) >= min_pct]
+            dff = ud.ordenar_por_mes_ano(dff, "mes_ano")
 
             if not dff.empty:
                 fig = px.bar(
-                    dff.sort_values("mes_ano"),
+                    dff,
                     x="mes_ano",
                     y=["meta", "producao"],
                     barmode="group",
-                    title="Meta x Produção por mês — histórico + lançamentos do app (filtro aplicado)",
+                    title="Meta x Produção por mês — histórico + lançamentos do app (ordem cronológica)",
                     facet_col="servidor" if dff["servidor"].nunique() <= 4 else None,
+                    category_orders={"mes_ano": dff["mes_ano"].drop_duplicates().tolist()},
                 )
                 st.plotly_chart(estilizar(fig), use_container_width=True)
 
@@ -460,6 +502,14 @@ elif pagina == "📈 Produtividade":
                 "planilha ou de um lançamento feito por este app."
             )
             st.dataframe(dff, use_container_width=True, hide_index=True)
+
+            filtros_prod = {}
+            if sel_serv:
+                filtros_prod["Servidor"] = ", ".join(sel_serv)
+            if sel_mes:
+                filtros_prod["Mês/Ano"] = ", ".join(sel_mes)
+            st.divider()
+            botoes_exportacao("Produtividade", dff, "produtividade", filtros_prod)
 
     with tab_d:
         sub_hist, sub_lanc = st.tabs(["Histórico (planilha)", "Lançamentos manuais (app)"])
@@ -524,6 +574,14 @@ elif pagina in (
                     break
 
         st.dataframe(dff, use_container_width=True, hide_index=True)
+
+        filtros_tab = {col: ", ".join(st.session_state.get(f"{sheet_name}_{col}", []) or [])
+                       for col in filtraveis[:3]}
+        filtros_tab = {k: v for k, v in filtros_tab.items() if v}
+        if busca:
+            filtros_tab["Busca"] = busca
+        st.divider()
+        botoes_exportacao(pagina, dff, sheet_name.replace(" ", "_"), filtros_tab)
 
     with tab_e:
         st.markdown("<span class='badge-insercao'>✏️ MODO INSERÇÃO — grava na planilha</span>", unsafe_allow_html=True)
@@ -714,7 +772,10 @@ elif pagina == "🖨️ Relatórios":
             cols_f = st.columns(min(3, len(colunas_filtraveis)))
             for i, col in enumerate(colunas_filtraveis[:3]):
                 with cols_f[i]:
-                    opts = sorted([v for v in dff[col].dropna().unique().tolist() if str(v).strip()])
+                    if col.strip().upper() == "MÊS/ANO":
+                        opts = ud.meses_ordenados(dff[col].dropna().tolist())
+                    else:
+                        opts = sorted([v for v in dff[col].dropna().unique().tolist() if str(v).strip()])
                     escolhidos = st.multiselect(col, opts, key=f"rel_{fonte}_{col}")
                     if escolhidos:
                         dff = dff[dff[col].isin(escolhidos)]
@@ -725,6 +786,13 @@ elif pagina == "🖨️ Relatórios":
             mask = dff.apply(lambda r: r.astype(str).str.contains(busca_rel, case=False, na=False).any(), axis=1)
             dff = dff[mask]
             filtros_aplicados["Busca"] = busca_rel
+
+        # Ordem cronológica real (não alfabética) sempre que houver coluna
+        # de mês/ano — vale tanto para a tela quanto para tudo que for exportado.
+        for candidato_mes in ("mes_ano", "MÊS/ANO"):
+            if candidato_mes in dff.columns:
+                dff = ud.ordenar_por_mes_ano(dff, candidato_mes)
+                break
 
     st.dataframe(dff, use_container_width=True, hide_index=True)
     st.caption(f"{len(dff)} registro(s) no relatório — de {len(df)} no total da base, sem amostragem.")
@@ -750,23 +818,29 @@ elif pagina == "🖨️ Relatórios":
             use_container_width=True,
         )
     with col3:
-        html_str = relatorios.gerar_html(fonte, dff, filtros_aplicados)
-        st.download_button(
-            "⬇️ HTML (impressão)",
-            data=html_str.encode("utf-8"),
-            file_name=f"{nome_arquivo_base}.html",
-            mime="text/html",
-            use_container_width=True,
-        )
+        try:
+            html_str = relatorios.gerar_html(fonte, dff, filtros_aplicados)
+            st.download_button(
+                "⬇️ HTML (impressão)",
+                data=html_str.encode("utf-8"),
+                file_name=f"{nome_arquivo_base}.html",
+                mime="text/html",
+                use_container_width=True,
+            )
+        except Exception as exc:
+            st.error(f"Falha ao gerar HTML: {exc}")
     with col4:
-        pdf_bytes = relatorios.gerar_pdf(fonte, dff, filtros_aplicados)
-        st.download_button(
-            "⬇️ PDF",
-            data=pdf_bytes,
-            file_name=f"{nome_arquivo_base}.pdf",
-            mime="application/pdf",
-            use_container_width=True,
-        )
+        try:
+            pdf_bytes = relatorios.gerar_pdf(fonte, dff, filtros_aplicados)
+            st.download_button(
+                "⬇️ PDF",
+                data=pdf_bytes,
+                file_name=f"{nome_arquivo_base}.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+            )
+        except Exception as exc:
+            st.error(f"Falha ao gerar PDF: {exc}")
 
 # ───────────────────────────── Rodapé ─────────────────────────────────────
 st.markdown("<div class='rodape-app'>ADMJESUSIA 107805</div>", unsafe_allow_html=True)
