@@ -413,10 +413,23 @@ if pagina == "📊 Dashboard":
     st.title("📊 Dashboard — Teletrabalho TJ/MA")
     st.markdown("<span class='badge-leitura'>🔎 MODO LEITURA</span>", unsafe_allow_html=True)
 
-    df_mag = sio.load_sheet_df(sio.SHEET_MAGISTRADOS, sio.HEADER_ROW[sio.SHEET_MAGISTRADOS])
-    df_sa = sio.load_sheet_df(sio.SHEET_SERVIDORES_ATIVOS, sio.HEADER_ROW[sio.SHEET_SERVIDORES_ATIVOS])
-    df_cnj = sio.load_sheet_df(sio.SHEET_CNJ, sio.HEADER_ROW[sio.SHEET_CNJ])
-    df_desl = sio.load_sheet_df(sio.SHEET_SERVIDORES_DESLIGADOS, sio.HEADER_ROW[sio.SHEET_SERVIDORES_DESLIGADOS])
+    # Carrega as 4 abas do Dashboard numa única chamada à API do Google
+    # Sheets (batchGet nativo), em vez de 4 idas-e-voltas separadas —
+    # acelera bastante o carregamento desta página. Se por algum motivo o
+    # lote falhar, cai para o método aba-por-aba (mais lento, mas nunca quebra).
+    try:
+        abas_dashboard = sio.load_varias_abas(
+            (sio.SHEET_MAGISTRADOS, sio.SHEET_SERVIDORES_ATIVOS, sio.SHEET_CNJ, sio.SHEET_SERVIDORES_DESLIGADOS)
+        )
+        df_mag = abas_dashboard[sio.SHEET_MAGISTRADOS]
+        df_sa = abas_dashboard[sio.SHEET_SERVIDORES_ATIVOS]
+        df_cnj = abas_dashboard[sio.SHEET_CNJ]
+        df_desl = abas_dashboard[sio.SHEET_SERVIDORES_DESLIGADOS]
+    except Exception:
+        df_mag = sio.load_sheet_df(sio.SHEET_MAGISTRADOS, sio.HEADER_ROW[sio.SHEET_MAGISTRADOS])
+        df_sa = sio.load_sheet_df(sio.SHEET_SERVIDORES_ATIVOS, sio.HEADER_ROW[sio.SHEET_SERVIDORES_ATIVOS])
+        df_cnj = sio.load_sheet_df(sio.SHEET_CNJ, sio.HEADER_ROW[sio.SHEET_CNJ])
+        df_desl = sio.load_sheet_df(sio.SHEET_SERVIDORES_DESLIGADOS, sio.HEADER_ROW[sio.SHEET_SERVIDORES_DESLIGADOS])
 
     kpi_row(
         [
